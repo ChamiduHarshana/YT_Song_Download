@@ -1,128 +1,157 @@
-console.log("🚀 xCHAMi Studio Advanced Music API Started...");
+console.log("🚀 xCHAMi Studio Hybrid Music API Started...");
 
-// Piped Instances (Backup සදහා ලින්ක් කිහිපයක්)
-// එකක් වැඩ නැත්නම් අනිත් එකෙන් වැඩ කරන විදියට හැදුවේ
-const INSTANCES = [
+// ==========================================
+// CONFIGURATION (Power Engines)
+// ==========================================
+// සින්දු හොයන්න පාවිච්චි කරන Servers (Search Engines)
+const SEARCH_ENGINES = [
   "https://pipedapi.kavin.rocks",
   "https://api.piped.ot.ax",
-  "https://pipedapi.drgns.space"
+  "https://pipedapi.drgns.space",
+  "https://api-piped.mha.fi"
 ];
 
-// වැඩ කරන Instance එකක් තෝරාගැනීම
-async function getWorkingInstance() {
-  for (const url of INSTANCES) {
+// සින්දු ඩවුන්ලෝඩ් කරන්න පාවිච්චි කරන Engine එක (Cobalt)
+const COBALT_API = "https://api.cobalt.tools/api/json";
+
+// ==========================================
+// HELPER FUNCTIONS
+// ==========================================
+
+// 1. හොදම Search Engine එක තෝරාගැනීම
+async function searchYouTube(query) {
+  for (const host of SEARCH_ENGINES) {
     try {
-      const res = await fetch(`${url}/`);
-      if (res.ok) return url;
-    } catch (e) { continue; }
+      console.log(`🔍 Searching on: ${host}...`);
+      const res = await fetch(`${host}/search?q=${encodeURIComponent(query)}&filter=videos`);
+      
+      if (res.ok) {
+        const data = await res.json();
+        if (data.items && data.items.length > 0) {
+            // හරියටම Video ID එක ගන්නවා
+            const video = data.items[0];
+            return {
+                title: video.title,
+                url: `https://www.youtube.com${video.url}`,
+                thumb: video.thumbnailUrl,
+                duration: video.duration,
+                author: video.uploaderName
+            };
+        }
+      }
+    } catch (e) {
+      console.log(`Engine ${host} failed, trying next...`);
+      continue; // ඊළඟ එකට මාරු වෙනවා
+    }
   }
-  return INSTANCES[0]; // බැරිම වුනොත් පළවෙනි එක ගන්නවා
+  return null; // සේරම ෆේල් වුනොත්
 }
 
+// 2. Cobalt හරහා Audio Link එක ගැනීම (High Quality)
+async function getDownloadLink(videoUrl) {
+    try {
+        const res = await fetch(COBALT_API, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Compatible; xCHAMi-Bot/1.0)'
+            },
+            body: JSON.stringify({
+                url: videoUrl,
+                vCodec: "h264",
+                vQuality: "720",
+                aFormat: "mp3",
+                isAudioOnly: true // Audio විතරයි
+            })
+        });
+
+        const data = await res.json();
+        if (data.url || data.audio) {
+            return data.url || data.audio;
+        }
+    } catch (e) {
+        console.error("Download Engine Failed:", e);
+    }
+    return null;
+}
+
+// ==========================================
+// MAIN SERVER
+// ==========================================
 Deno.serve(async (req) => {
   const url = new URL(req.url);
 
   // 1. Home Page
   if (url.pathname === "/") {
     return new Response(JSON.stringify({
-      status: "Active",
-      owner: "xCHAMi Studio",
-      mode: "Ultra-Fast Deno API",
-      usage: "/api?q=Song Name or URL"
-    }, null, 2), {
-      headers: { "content-type": "application/json" }
-    });
+      status: "Online",
+      system: "xCHAMi Hybrid Music Engine",
+      message: "API is fully operational."
+    }, null, 2), { headers: { "content-type": "application/json" } });
   }
 
-  // 2. Main API Logic
+  // 2. API Endpoint
   if (url.pathname === "/api") {
-    const query = url.searchParams.get("q");
-
-    if (!query) {
-      return new Response(JSON.stringify({ status: "error", message: "Missing query (?q=)" }), { 
-        status: 400, headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*" } 
-      });
-    }
+    const q = url.searchParams.get("q");
+    if (!q) return new Response(JSON.stringify({ error: "Missing query" }), { status: 400 });
 
     try {
-      const BASE_URL = await getWorkingInstance();
-      let videoId = "";
-      let videoInfo = {};
+      let videoData = null;
+      let downloadUrl = null;
 
-      // STEP 1: Link එකක්ද Search එකක්ද කියලා බලනවා
-      // (සරල regex එකක් මගින් Video ID එක ගන්නවා)
-      const urlRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
-      const match = query.match(urlRegex);
+      // STEP A: Link එකක්ද නමක්ද කියලා බැලීම
+      const isUrl = q.includes("youtube.com") || q.includes("youtu.be");
 
-      if (match && match[1]) {
-        // Link එකක් නම් ID එක කෙලින්ම ගන්නවා
-        videoId = match[1];
+      if (isUrl) {
+        // Link එකක් නම් කෙලින්ම Download කරනවා
+        downloadUrl = await getDownloadLink(q);
+        // විස්තර ටික නිකන් Dummy විදියට හදනවා (URL එකෙන් විස්තර ගන්න අමාරු නිසා ඉක්මනට)
+        videoData = {
+            title: "YouTube Audio",
+            url: q,
+            thumb: "https://i.ibb.co/3zpkv0S/music-placeholder.jpg",
+            author: "Unknown Artist",
+            duration: "N/A"
+        };
       } else {
-        // Search එකක් නම් Piped API එකෙන් Search කරනවා
-        console.log(`Searching for: ${query} on ${BASE_URL}`);
-        const searchRes = await fetch(`${BASE_URL}/search?q=${encodeURIComponent(query)}&filter=videos`);
-        const searchData = await searchRes.json();
-
-        if (!searchData.items || searchData.items.length === 0) {
-          throw new Error("No results found");
+        // නමක් නම් Search කරනවා
+        videoData = await searchYouTube(q);
+        if (!videoData) {
+             return new Response(JSON.stringify({ status: "error", message: "Song not found on any server." }), 
+             { status: 404, headers: { "content-type": "application/json" } });
         }
-        
-        // පළවෙනි Result එක ගන්නවා
-        videoId = searchData.items[0].url.split("v=")[1];
+        // හොයාගත්ත Video එකේ Link එක යවලා Download Link එක ගන්නවා
+        downloadUrl = await getDownloadLink(videoData.url);
       }
 
-      // STEP 2: Video එකේ සින්දුව (Audio Stream) ලබා ගැනීම
-      const streamRes = await fetch(`${BASE_URL}/streams/${videoId}`);
-      const streamData = await streamRes.json();
+      if (!downloadUrl) {
+        return new Response(JSON.stringify({ status: "error", message: "Download failed. Try again." }), 
+        { status: 500, headers: { "content-type": "application/json" } });
+      }
 
-      // Audio Files පමණක් ෆිල්ටර් කරගැනීම
-      const audioStreams = streamData.audioStreams;
-      if (!audioStreams || audioStreams.length === 0) throw new Error("No audio streams found");
-
-      // හොදම Quality එක (m4a format) තෝරාගැනීම
-      const bestAudio = audioStreams.find(s => s.format === "m4a") || audioStreams[0];
-
-      // Output JSON එක හැදීම
-      const responseData = {
+      // STEP B: Final Response Sending
+      return new Response(JSON.stringify({
         status: "success",
         data: {
-          title: streamData.title,
-          artist: streamData.uploader,
-          thumbnail: streamData.thumbnailUrl,
-          duration: convertDuration(streamData.duration),
-          views: streamData.views,
-          download_url: bestAudio.url, // කෙලින්ම Download වෙන ලින්ක් එක
-          file_type: "m4a", // WhatsApp supports m4a as audio
-          quality: bestAudio.quality || "128kbps"
-        },
-        engine: "xCHAMi Piped Engine"
-      };
-
-      return new Response(JSON.stringify(responseData, null, 2), {
+            title: videoData.title,
+            artist: videoData.author,
+            thumbnail: videoData.thumb,
+            duration: videoData.duration, // තත්පර වලින්
+            url: videoData.url,
+            dl_link: downloadUrl // මේක තමයි MP3 ලින්ක් එක
+        }
+      }, null, 2), {
         headers: { 
           "content-type": "application/json", 
           "Access-Control-Allow-Origin": "*" 
         }
       });
 
-    } catch (error) {
-      return new Response(JSON.stringify({
-        status: "error",
-        message: "Failed to fetch data",
-        details: error.message
-      }), { 
-        status: 500,
-        headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*" } 
-      });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "content-type": "application/json" } });
     }
   }
 
-  return new Response("Not Found", { status: 404 });
+  return new Response("404 Not Found", { status: 404 });
 });
-
-// තත්පර ගණන විනාඩි වලට හරවන function එක
-function convertDuration(seconds) {
-  const min = Math.floor(seconds / 60);
-  const sec = seconds % 60;
-  return `${min}:${sec < 10 ? '0' : ''}${sec}`;
-}
