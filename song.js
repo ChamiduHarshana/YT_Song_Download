@@ -11,119 +11,89 @@ const corsHeaders = {
 };
 
 // ==========================================
-// HELPER: TIKTOK (TikWM Proxy)
+// HELPER: FETCH WITH RETRY (API මාරු කරමින් උත්සාහ කිරීම)
 // ==========================================
-async function tiktokDL(url) {
-  try {
-    const domain = 'https://www.tikwm.com/api/';
-    const res = await fetch(domain + `?url=${url}&count=12&cursor=0&web=1&hd=1`);
-    const data = await res.json();
-    return data.data;
-  } catch (e) {
-    return null;
-  }
-}
-
-// ==========================================
-// HELPER: YOUTUBE SEARCH (Custom Fetch)
-// ==========================================
-async function ytSearch(query) {
-    // අපි YTS Library එක වෙනුවට සැහැල්ලු API එකක් Proxy කරනවා
-    try {
-        const res = await fetch(`https://api.dreaded.site/api/yts?search=${encodeURIComponent(query)}`);
-        const data = await res.json();
-        return data.result || []; // Array එකක් ආපසු යවනවා
-    } catch (e) {
-        return [];
+async function fetchVideoData(url) {
+    // URL එකේ තියෙන අනවශ්‍ය කෑලි (?si=...) අයින් කිරීම
+    let cleanUrl = url;
+    if(url.includes("youtu")) {
+        cleanUrl = url.split("?si=")[0].split("&si=")[0];
     }
-}
 
-// ==========================================
-// HELPER: YOUTUBE DOWNLOADER (Relay)
-// ==========================================
-async function ytDownload(url) {
-    // Deno ඇතුලේ ytdl දුවන්න බැරි නිසා අපි හොඳ API එකක් Relay කරනවා
+    // STRATEGY 1: Dark-Yasiya API (Best for SL)
     try {
-        // Option 1: Using a reliable public API as backend
-        const res = await fetch(`https://api.dreaded.site/api/ytdl/video?url=${url}`);
+        const res = await fetch(`https://www.dark-yasiya-api.site/download/ytmp3?url=${cleanUrl}`);
         const data = await res.json();
-        
-        if(data && data.result) {
+        if (data.status && data.result) {
             return {
-                title: data.result.title || "YouTube Video",
-                thumb: data.result.thumbnail || "",
-                audio_url: data.result.mp3 || data.result.link, // Audio Link
-                video_url: data.result.mp4 || data.result.link  // Video Link
+                title: data.result.title,
+                thumb: data.result.thumbnail,
+                video: data.result.dl_link, // Video Link
+                audio: data.result.dl_link  // Audio Link
             };
         }
-        return null;
     } catch (e) {
-        return null;
+        console.log("Strategy 1 Failed");
     }
+
+    // STRATEGY 2: Dreaded API (Backup)
+    try {
+        const res = await fetch(`https://api.dreaded.site/api/ytdl/video?url=${cleanUrl}`);
+        const data = await res.json();
+        if (data.result) {
+            return {
+                title: data.result.title,
+                thumb: data.result.thumbnail,
+                video: data.result.mp4,
+                audio: data.result.mp3
+            };
+        }
+    } catch (e) {
+        console.log("Strategy 2 Failed");
+    }
+
+    return null;
 }
 
 // ==========================================
-// MAIN SERVER CODE
+// MAIN SERVER
 // ==========================================
 serve(async (req) => {
   const url = new URL(req.url);
   const path = url.pathname;
-  const q = url.searchParams.get("q") || url.searchParams.get("url");
+  const q = url.searchParams.get("url") || url.searchParams.get("q");
 
-  // 1. Root Message
+  // 1. Root Check
   if (path === "/") {
     return new Response(JSON.stringify({ 
       status: "Alive", 
-      owner: "xCHAMi Studio",
-      endpoints: ["/search?q=", "/yt?url=", "/tiktok?url="] 
+      message: "xCHAMi Proxy Server Running! 🔥" 
     }), { headers: corsHeaders });
   }
 
-  // 2. YouTube Search Route
-  if (path === "/search") {
-    if (!q) return new Response(JSON.stringify({ error: "Query missing" }), { headers: corsHeaders });
-    
-    const results = await ytSearch(q);
-    return new Response(JSON.stringify({
-      status: "success",
-      data: results
-    }), { headers: corsHeaders });
-  }
-
-  // 3. YouTube Download Route
+  // 2. YouTube Route
   if (path === "/yt") {
-    if (!q) return new Response(JSON.stringify({ error: "URL missing" }), { headers: corsHeaders });
-    
-    const data = await ytDownload(q);
-    if (!data) return new Response(JSON.stringify({ status: "fail", message: "Download failed" }), { headers: corsHeaders });
+    if (!q) return new Response(JSON.stringify({ error: "Link missing" }), { headers: corsHeaders });
 
-    return new Response(JSON.stringify({
-      status: "success",
-      title: data.title,
-      thumb: data.thumb,
-      data: {
-          audio_url: data.audio_url, // බොට් කෝඩ් එකේ මේ නමම තියෙන්න ඕනේ
-          video_url: data.video_url
-      }
-    }), { headers: corsHeaders });
+    const data = await fetchVideoData(q);
+
+    if (data) {
+        return new Response(JSON.stringify({
+            status: "success",
+            title: data.title,
+            thumb: data.thumb,
+            data: {
+                video_url: data.video,
+                audio_url: data.audio
+            }
+        }), { headers: corsHeaders });
+    } else {
+        return new Response(JSON.stringify({ 
+            status: "fail", 
+            message: "All APIs busy. Try again later." 
+        }), { headers: corsHeaders });
+    }
   }
 
-  // 4. TikTok Route
-  if (path === "/tiktok") {
-    if (!q) return new Response(JSON.stringify({ error: "URL missing" }), { headers: corsHeaders });
-    
-    const data = await tiktokDL(q);
-    if(!data) return new Response(JSON.stringify({ status: "fail", message: "Video not found" }), { headers: corsHeaders });
-
-    return new Response(JSON.stringify({
-      status: "success",
-      title: data.title,
-      cover: data.cover,
-      url: data.play, 
-      wm_url: data.wmplay,
-      music: data.music
-    }), { headers: corsHeaders });
-  }
-
-  return new Response(JSON.stringify({ error: "Invalid Route" }), { status: 404, headers: corsHeaders });
+  return new Response("Not Found", { status: 404 });
 });
